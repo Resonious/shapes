@@ -1,4 +1,4 @@
-LDFLAGS = -lvulkan -ldl -lpthread
+LDFLAGS = -lvulkan -ldl -lpthread -lglfw
 CFLAGS = -std=c++17
 
 shapes: main.cpp
