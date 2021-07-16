@@ -1,8 +1,8 @@
 LDFLAGS = -lvulkan -ldl -lpthread -lglfw
-CFLAGS = -std=c++17
+CFLAGS = -ggdb -std=c++17
 
-shapes: main.cpp
-	g++ $(CFLAGS) -o shapes main.cpp $(LDFLAGS)
+shapes: main.cpp debug.h debug.cpp
+	g++ $(CFLAGS) -o shapes main.cpp debug.cpp $(LDFLAGS)
 
 .PHONY: clean
 

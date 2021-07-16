@@ -5,7 +5,7 @@
 #include <memory>
 #include <string>
 
-#define die(print) do { std::cout << print << "\n"; exit(2); } while(0)
+#include "debug.h"
 
 using std::unique_ptr;
 
@@ -36,7 +36,7 @@ public:
             createInfo.enabledLayerCount = 0;
 
             VkResult result = vkCreateInstance(&createInfo, nullptr, &instance);
-            if (result != VK_SUCCESS) die("ah fuck " << result);
+            if (result != VK_SUCCESS) die(std::cout << "ah fuck " << result);
         }
 
         //=== Dick around with extensions (completely unnecessary) ===//
@@ -59,10 +59,22 @@ public:
         //=== Pick a graphics device ===//
         {
             uint32_t deviceCount = 0;
-            vkEnumerateInstanceExtensionProperties(nullptr, &deviceCount, nullptr);
+            vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
             unique_ptr<VkPhysicalDevice[]> devices(new VkPhysicalDevice[deviceCount]);
-            // TODO: what the hell is this? error?
-            vkEnumerateInstanceExtensionProperties(nullptr, &deviceCount, devices.get());
+            vkEnumeratePhysicalDevices(instance, &deviceCount, devices.get());
+
+            for (size_t i = 0; i < deviceCount; ++i) {
+                std::cout << "device " << i+1 << '/' << deviceCount << '\n';
+
+                VkPhysicalDeviceFeatures deviceFeatures;
+                VkPhysicalDeviceProperties deviceProperties;
+                vkGetPhysicalDeviceFeatures(devices[i], &deviceFeatures);
+                vkGetPhysicalDeviceProperties(devices[i], &deviceProperties);
+
+                std::cout << "\tdevice type: "
+                         << physicalDeviceTypeToString(deviceProperties.deviceType)
+                         << '\n';
+            }
         }
     }
 
