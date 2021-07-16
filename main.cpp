@@ -9,6 +9,8 @@
 
 using std::unique_ptr;
 
+#define SECTION(message) std::cout << '\n' << message << '\n'
+
 class HelloTriangleApplication {
     VkInstance instance;
     VkPhysicalDevice physicalDevice;
@@ -18,7 +20,7 @@ public:
         uint32_t glfwExtensionCount = 0;
         const char **glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
-        //=== Create Vulkan "Instance" ===//
+        SECTION("=== Create Vulkan \"Instance\" ===");
         {
             VkApplicationInfo appInfo{};
             appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -37,45 +39,64 @@ public:
 
             VkResult result = vkCreateInstance(&createInfo, nullptr, &instance);
             if (result != VK_SUCCESS) die(std::cout << "ah fuck " << result);
+            std::cout << "easy" << '\n';
         }
 
-        //=== Dick around with extensions (completely unnecessary) ===//
+        SECTION("=== Dick around with extensions (completely unnecessary) ===");
         {
             uint32_t extensionCount = 0;
             vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
             unique_ptr<VkExtensionProperties[]> extensions(new VkExtensionProperties[extensionCount]);
             vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.get());
 
-            std::cout << "available extensions:\n";
-            for (size_t i = 0; i < extensionCount; ++i) {
-                std::cout << '\t' << extensions[i].extensionName << '\n';
-            }
             std::cout << "extensions requested by GLFW:\n";
             for (size_t i = 0; i < glfwExtensionCount; ++i) {
                 std::cout << '\t' << glfwExtensions[i] << '\n';
             }
+            std::cout << "available extensions:\n";
+            for (size_t i = 0; i < extensionCount; ++i) {
+                std::cout << '\t' << extensions[i].extensionName << '\n';
+            }
         }
 
-        //=== Pick a graphics device ===//
+        SECTION("=== Pick a graphics device ===");
         {
             uint32_t deviceCount = 0;
             vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
             unique_ptr<VkPhysicalDevice[]> devices(new VkPhysicalDevice[deviceCount]);
             vkEnumeratePhysicalDevices(instance, &deviceCount, devices.get());
 
+            if (deviceCount == 0) die(std::cout << "You don't even have a GPU dude!");
+
             for (size_t i = 0; i < deviceCount; ++i) {
                 std::cout << "device " << i+1 << '/' << deviceCount << '\n';
 
-                VkPhysicalDeviceFeatures deviceFeatures;
                 VkPhysicalDeviceProperties deviceProperties;
-                vkGetPhysicalDeviceFeatures(devices[i], &deviceFeatures);
                 vkGetPhysicalDeviceProperties(devices[i], &deviceProperties);
 
                 std::cout << "\tdevice type: "
                          << physicalDeviceTypeToString(deviceProperties.deviceType)
                          << '\n';
             }
+            for (size_t i = 0; i < deviceCount; ++i) {
+                VkPhysicalDeviceProperties deviceProperties;
+                vkGetPhysicalDeviceProperties(devices[i], &deviceProperties);
+
+                if (deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+                    std::cout << "picking " << i+1 << '/' << deviceCount << " 'cause it's descrete!\n";
+                    physicalDevice = devices[i];
+                    break;
+                }
+                if (i+1 == deviceCount) {
+                    std::cout << "alright I guess " << i+1 << '/' << deviceCount << " is good enough.\n";
+                    physicalDevice = devices[i];
+                    break;
+                }
+            }
         }
+
+        SECTION("=== Gather queue families ===");
+        std::cout << "haha\n";
     }
 
     void mainLoop() {
