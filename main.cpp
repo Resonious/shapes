@@ -3,20 +3,26 @@
 
 #include <iostream>
 #include <memory>
-#include <string>
+#include <optional>
 
 #include "debug.h"
 
 using std::unique_ptr;
+using std::optional;
 
 #define SECTION(message) std::cout << '\n' << message << '\n'
 
 class HelloTriangleApplication {
     VkInstance instance;
     VkPhysicalDevice physicalDevice;
+    VkDevice device;
+
+    VkSurfaceKHR surface;
+
+    optional<uint32_t> graphicsQueueFamily;
 
 public:
-    void initVulkan() {
+    void initVulkan(GLFWwindow *window) {
         uint32_t glfwExtensionCount = 0;
         const char **glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
@@ -92,11 +98,63 @@ public:
                     physicalDevice = devices[i];
                     break;
                 }
+                // TODO: the below queue families step should be involved here.
             }
         }
 
         SECTION("=== Gather queue families ===");
-        std::cout << "haha\n";
+        {
+            // TODO: looks like we should actually use this as a way to determine if a physical device is usable.
+            // Like, "must have graphics queue and sexy compute queue!!" or something.
+            uint32_t queueFamilyCount = 0;
+            vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, nullptr);
+            unique_ptr<VkQueueFamilyProperties[]> queueFamilies(new VkQueueFamilyProperties[queueFamilyCount]);
+            vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, queueFamilies.get());
+
+            for (uint32_t i = 0; i < queueFamilyCount; ++i) {
+                if (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+                    std::cout << "going with queue #" << i << " for graphics.\n";
+                    graphicsQueueFamily = i;
+                    break;
+                }
+            }
+
+            if (!graphicsQueueFamily.has_value()) die(std::cout << "couldn't find queue :(");
+        }
+
+        SECTION("=== Create logical device ===");
+        {
+            float queuePriority = 1.0f;
+
+            VkDeviceQueueCreateInfo queueCreateInfo{};
+            queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+            queueCreateInfo.queueFamilyIndex = graphicsQueueFamily.value();
+            queueCreateInfo.queueCount = 1;
+            queueCreateInfo.pQueuePriorities = &queuePriority;
+
+            // TODO: We can populate this with feature we want later
+            VkPhysicalDeviceFeatures deviceFeatures{};
+
+            VkDeviceCreateInfo createInfo{};
+            createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+            createInfo.pQueueCreateInfos = &queueCreateInfo;
+            createInfo.queueCreateInfoCount = 1;
+            createInfo.pEnabledFeatures = &deviceFeatures;
+            createInfo.enabledLayerCount = 0;
+
+            auto createResult = vkCreateDevice(physicalDevice, &createInfo, nullptr, &device);
+            if (createResult != VK_SUCCESS) die(std::cout << "vkCreateDevice failed! " << createResult);
+
+            std::cout << "done\n";
+        }
+
+        SECTION("=== Create window surface ===");
+        {
+            auto createResult = glfwCreateWindowSurface(instance, window, nullptr, &surface);
+            if (createResult != VK_SUCCESS) die(std::cout << "glfwCreateWindowSurface failed! " << createResult);
+
+            std::cout << "done\n";
+        }
     }
 
     void mainLoop() {
@@ -104,6 +162,8 @@ public:
     }
 
     void cleanup() {
+        vkDestroySurfaceKHR(instance, surface, nullptr);
+        vkDestroyDevice(device, nullptr);
         vkDestroyInstance(instance, nullptr);
     }
 };
@@ -125,10 +185,11 @@ int main() {
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
     auto window = glfwCreateWindow(800, 600, "Shapes!??", nullptr, nullptr);
-    app.initVulkan();
+    app.initVulkan(window);
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
+        app.mainLoop();
     }
 
     app.cleanup();
