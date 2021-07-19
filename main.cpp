@@ -20,6 +20,7 @@ class HelloTriangleApplication {
     VkSurfaceKHR surface;
 
     optional<uint32_t> graphicsQueueFamily;
+    optional<uint32_t> presentQueueFamily;
 
 public:
     void initVulkan(GLFWwindow *window) {
@@ -102,6 +103,14 @@ public:
             }
         }
 
+        SECTION("=== Create window surface ===");
+        {
+            auto createResult = glfwCreateWindowSurface(instance, window, nullptr, &surface);
+            if (createResult != VK_SUCCESS) die(std::cout << "glfwCreateWindowSurface failed! " << createResult);
+
+            std::cout << "done\n";
+        }
+
         SECTION("=== Gather queue families ===");
         {
             // TODO: looks like we should actually use this as a way to determine if a physical device is usable.
@@ -111,15 +120,25 @@ public:
             unique_ptr<VkQueueFamilyProperties[]> queueFamilies(new VkQueueFamilyProperties[queueFamilyCount]);
             vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, queueFamilies.get());
 
+            std::cout << "queue family count: " << queueFamilyCount << ".\n";
             for (uint32_t i = 0; i < queueFamilyCount; ++i) {
+                // Graphics queue family
                 if (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
                     std::cout << "going with queue #" << i << " for graphics.\n";
                     graphicsQueueFamily = i;
-                    break;
+                }
+
+                // Present queue family (probably, hopefully, the same as the graphics queue family)
+                VkBool32 presentSupport;
+                vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, i, surface, &presentSupport);
+                if (presentSupport) {
+                    std::cout << "going with queue #" << i << " for present.\n";
+                    presentQueueFamily = i;
                 }
             }
 
-            if (!graphicsQueueFamily.has_value()) die(std::cout << "couldn't find queue :(");
+            if (!graphicsQueueFamily.has_value()) die(std::cout << "couldn't find graphics queue :(");
+            if (!presentQueueFamily.has_value()) die(std::cout << "couldn't find present queue :(");
         }
 
         SECTION("=== Create logical device ===");
@@ -144,14 +163,6 @@ public:
 
             auto createResult = vkCreateDevice(physicalDevice, &createInfo, nullptr, &device);
             if (createResult != VK_SUCCESS) die(std::cout << "vkCreateDevice failed! " << createResult);
-
-            std::cout << "done\n";
-        }
-
-        SECTION("=== Create window surface ===");
-        {
-            auto createResult = glfwCreateWindowSurface(instance, window, nullptr, &surface);
-            if (createResult != VK_SUCCESS) die(std::cout << "glfwCreateWindowSurface failed! " << createResult);
 
             std::cout << "done\n";
         }
