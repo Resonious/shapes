@@ -176,6 +176,9 @@ public:
             auto createResult = vkCreateDevice(physicalDevice, &createInfo, nullptr, &device);
             if (createResult != VK_SUCCESS) die(std::cout << "vkCreateDevice failed! " << createResult);
 
+            std::cout << "logical devices created! now grabbing the present queue\n";
+            vkGetDeviceQueue(device, presentQueueFamily.value(), 0, &presentQueue);
+
             std::cout << "done\n";
         }
     }
