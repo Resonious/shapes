@@ -6,6 +6,8 @@
 #include <optional>
 #include <set>
 #include <vector>
+#include <string>
+#include <map>
 
 #include "debug.h"
 
@@ -24,6 +26,41 @@ class RenderState {
 
     optional<uint32_t> graphicsQueueFamily;
     optional<uint32_t> presentQueueFamily;
+
+    size_t howGoodIsThisDevice(VkPhysicalDevice device) {
+        size_t score = 0;
+
+        VkPhysicalDeviceProperties deviceProperties;
+        vkGetPhysicalDeviceProperties(device, &deviceProperties);
+
+        uint32_t extensionCount;
+        vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
+        unique_ptr<VkExtensionProperties[]> extensions(new VkExtensionProperties[extensionCount]);
+        vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, extensions.get());
+
+        std::set<std::string> requiredExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+        for (size_t i = 0; i < extensionCount; ++i) {
+            auto erased = requiredExtensions.erase(extensions[i].extensionName);
+            if (erased > 0)
+                std::cout << "\tsupports " << extensions[i].extensionName << "!\n";
+        }
+        if (requiredExtensions.size() > 0) {
+            std::cout << "\tdoesn't support: ";
+            for (auto &ext : requiredExtensions) std::cout << ext << ' ';
+            std::cout << "- forget it.\n";
+            return 0;
+        }
+
+        std::cout << "\thas all the extensions we need. not bad\n";
+        score += 1;
+
+        if (deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+            score += 1000;
+            std::cout << "\tdiscrete card. awesome";
+        }
+
+        return score;
+    }
 
 public:
     void initVulkan(GLFWwindow *window) {
@@ -48,7 +85,7 @@ public:
             createInfo.enabledLayerCount = 0;
 
             VkResult result = vkCreateInstance(&createInfo, nullptr, &instance);
-            if (result != VK_SUCCESS) die(std::cout << "ah fuck " << result);
+            if (result != VK_SUCCESS) die(log << "ah fuck " << result);
             std::cout << "easy" << '\n';
         }
 
@@ -69,15 +106,16 @@ public:
             }
         }
 
-        SECTION("=== Pick a graphics device ===");
+        SECTION("=== Pick a physical graphics device ===");
         {
             uint32_t deviceCount = 0;
             vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
             unique_ptr<VkPhysicalDevice[]> devices(new VkPhysicalDevice[deviceCount]);
             vkEnumeratePhysicalDevices(instance, &deviceCount, devices.get());
 
-            if (deviceCount == 0) die(std::cout << "You don't even have a GPU dude!");
+            if (deviceCount == 0) die(log << "You don't even have a GPU dude!");
 
+            std::map<size_t, size_t> ranking;
             for (size_t i = 0; i < deviceCount; ++i) {
                 std::cout << "device " << i+1 << '/' << deviceCount << '\n';
 
@@ -87,29 +125,21 @@ public:
                 std::cout << "\tdevice type: "
                          << physicalDeviceTypeToString(deviceProperties.deviceType)
                          << '\n';
-            }
-            for (size_t i = 0; i < deviceCount; ++i) {
-                VkPhysicalDeviceProperties deviceProperties;
-                vkGetPhysicalDeviceProperties(devices[i], &deviceProperties);
 
-                if (deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
-                    std::cout << "picking " << i+1 << '/' << deviceCount << " 'cause it's descrete!\n";
-                    physicalDevice = devices[i];
-                    break;
-                }
-                if (i+1 == deviceCount) {
-                    std::cout << "alright I guess " << i+1 << '/' << deviceCount << " is good enough.\n";
-                    physicalDevice = devices[i];
-                    break;
-                }
-                // TODO (1): the below queue families step should be involved here.
+                size_t score = howGoodIsThisDevice(devices[i]);
+                ranking.emplace(score, i);
+                std::cout << "\tfinal score: " << score << '\n';
             }
+
+            size_t winnerIndex = ranking.rbegin()->second;
+            physicalDevice = devices[winnerIndex];
+            std::cout << winnerIndex+1 << '/' << deviceCount << " wins.\n";
         }
 
         SECTION("=== Create window surface ===");
         {
             auto createResult = glfwCreateWindowSurface(instance, window, nullptr, &surface);
-            if (createResult != VK_SUCCESS) die(std::cout << "glfwCreateWindowSurface failed! " << createResult);
+            if (createResult != VK_SUCCESS) die(log << "glfwCreateWindowSurface failed! " << createResult);
 
             std::cout << "done\n";
         }
@@ -140,8 +170,8 @@ public:
                 }
             }
 
-            if (!graphicsQueueFamily.has_value()) die(std::cout << "couldn't find graphics queue :(");
-            if (!presentQueueFamily.has_value()) die(std::cout << "couldn't find present queue :(");
+            if (!graphicsQueueFamily.has_value()) die(log << "couldn't find graphics queue :(");
+            if (!presentQueueFamily.has_value()) die(log << "couldn't find present queue :(");
         }
 
         SECTION("=== Create logical device ===");
@@ -174,7 +204,7 @@ public:
             createInfo.enabledLayerCount = 0;
 
             auto createResult = vkCreateDevice(physicalDevice, &createInfo, nullptr, &device);
-            if (createResult != VK_SUCCESS) die(std::cout << "vkCreateDevice failed! " << createResult);
+            if (createResult != VK_SUCCESS) die(log << "vkCreateDevice failed! " << createResult);
 
             std::cout << "logical devices created! now grabbing the present queue\n";
             vkGetDeviceQueue(device, presentQueueFamily.value(), 0, &presentQueue);
