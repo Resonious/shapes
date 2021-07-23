@@ -9,22 +9,24 @@
 #include <string>
 #include <map>
 #include <array>
+#include <algorithm>
 
 #include "debug.h"
 
 using std::unique_ptr;
 using std::optional;
+using std::clamp;
 
 #define SECTION(message) std::cout << '\n' << message << '\n'
 
 // This all uses https://vulkan-tutorial.com/en as a reference.
 
-struct SwapChainSupport {
+struct SwapchainSupport {
     VkSurfaceCapabilitiesKHR capabilities;
     std::vector<VkSurfaceFormatKHR> formats;
     std::vector<VkPresentModeKHR> presentModes;
 
-    SwapChainSupport(VkPhysicalDevice device, VkSurfaceKHR surface) {
+    SwapchainSupport(VkPhysicalDevice device, VkSurfaceKHR surface) {
         vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &capabilities);
 
         // Get formats
@@ -43,6 +45,59 @@ struct SwapChainSupport {
             vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, presentModes.data());
         }
     }
+
+    // The GPU might support many color formats, this picks the best one.
+    VkSurfaceFormatKHR bestSurfaceFormat() {
+        for (const auto& format : formats) {
+            // This is "the best"
+            if (
+                format.format == VK_FORMAT_B8G8R8A8_SRGB &&
+                format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR
+            ) {
+                return format;
+            }
+        }
+
+        // Who cares at this point
+        return formats[0];
+    }
+
+    // The "present mode" is like, how many framebuffers do we have and what's the algorithm for
+    // showing them on the screen vs filling them.
+    VkPresentModeKHR bestPresentMode() {
+        // Hmmm... We could check for VK_PRESENT_MODE_MAILBOX_KHR. That would let us go wild
+        // but I don't really see the point in rendering multiple times per display refresh...
+        return VK_PRESENT_MODE_FIFO_KHR;
+    }
+
+    // The "swap extent" is the size of our framebuffers in pixels.
+    VkExtent2D swapExtent(GLFWwindow *window) {
+        if (capabilities.currentExtent.width != UINT32_MAX) {
+            return capabilities.currentExtent;
+        }
+        int width, height;
+        glfwGetFramebufferSize(window, &width, &height);
+
+        VkExtent2D result = { static_cast<uint32_t>(width), static_cast<uint32_t>(height) };
+        result.width = clamp(
+            result.width,
+            capabilities.minImageExtent.width,
+            capabilities.maxImageExtent.width
+        );
+        result.height = clamp(
+            result.height,
+            capabilities.minImageExtent.height,
+            capabilities.maxImageExtent.height
+        );
+
+        return result;
+    }
+
+    uint32_t clampImageCount(uint32_t wanted) {
+        if (capabilities.maxImageCount == 0) return wanted;
+        if (capabilities.maxImageCount < wanted) return capabilities.maxImageCount;
+        return wanted;
+    }
 };
 
 class RenderState {
@@ -52,6 +107,7 @@ class RenderState {
     VkQueue presentQueue;
 
     VkSurfaceKHR surface;
+    VkSwapchainKHR swapchain;
 
     optional<uint32_t> graphicsQueueFamily;
     optional<uint32_t> presentQueueFamily;
@@ -83,12 +139,12 @@ class RenderState {
         std::cout << "\thas all the extensions we need. not bad\n";
 
         // Make sure the swapchain is actually functional
-        SwapChainSupport swapChain(device, surface);
-        if (swapChain.formats.empty()) {
+        SwapchainSupport swapchainSupport(device, surface);
+        if (swapchainSupport.formats.empty()) {
             std::cout << "\tswap chain has no formats. forget it!\n";
             return 0;
         }
-        if (swapChain.presentModes.empty()) {
+        if (swapchainSupport.presentModes.empty()) {
             std::cout << "\tswap chain has no present modes. forget it!\n";
             return 0;
         }
@@ -104,6 +160,39 @@ class RenderState {
         }
 
         return score;
+    }
+
+    void createSwapchain(GLFWwindow *window) {
+        SwapchainSupport support(physicalDevice, surface);
+
+        VkSwapchainCreateInfoKHR createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+        createInfo.surface = surface;
+        createInfo.minImageCount = support.clampImageCount(support.capabilities.minImageCount + 1);
+
+        auto surfaceFormat = support.bestSurfaceFormat();
+        createInfo.imageFormat = surfaceFormat.format;
+        createInfo.imageColorSpace = surfaceFormat.colorSpace;
+        createInfo.imageExtent = support.swapExtent(window);
+        createInfo.imageArrayLayers = 1;
+        createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+        if (graphicsQueueFamily != presentQueueFamily) {
+            die(log << "2 separate queue families! not supported yet. see "
+                    << "https://vulkan-tutorial.com/en/Drawing_a_triangle/Presentation/Swap_chain I guess.");
+        }
+        createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        createInfo.preTransform = support.capabilities.currentTransform;
+        createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+        createInfo.presentMode = support.bestPresentMode();
+        createInfo.clipped = VK_TRUE;
+
+        // Oh boy!!!
+        createInfo.oldSwapchain = VK_NULL_HANDLE;
+
+        auto result = vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapchain);
+        if (result != VK_SUCCESS) die(log << "omg, failed to create swapchain. " << result);
     }
 
 public:
@@ -255,6 +344,10 @@ public:
 
             std::cout << "done\n";
         }
+
+        SECTION("=== Swapchain and friends. This is stuff that may happen a lot ===");
+        createSwapchain(window);
+        std::cout << "done!\n";
     }
 
     void mainLoop() {
@@ -262,6 +355,7 @@ public:
     }
 
     void cleanup() {
+        vkDestroySwapchainKHR(device, swapchain, nullptr);
         vkDestroySurfaceKHR(instance, surface, nullptr);
         vkDestroyDevice(device, nullptr);
         vkDestroyInstance(instance, nullptr);
