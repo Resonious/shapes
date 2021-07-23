@@ -4,6 +4,8 @@
 #include <iostream>
 #include <memory>
 #include <optional>
+#include <set>
+#include <vector>
 
 #include "debug.h"
 
@@ -16,6 +18,7 @@ class HelloTriangleApplication {
     VkInstance instance;
     VkPhysicalDevice physicalDevice;
     VkDevice device;
+    VkQueue presentQueue;
 
     VkSurfaceKHR surface;
 
@@ -99,7 +102,7 @@ public:
                     physicalDevice = devices[i];
                     break;
                 }
-                // TODO: the below queue families step should be involved here.
+                // TODO (1): the below queue families step should be involved here.
             }
         }
 
@@ -113,7 +116,7 @@ public:
 
         SECTION("=== Gather queue families ===");
         {
-            // TODO: looks like we should actually use this as a way to determine if a physical device is usable.
+            // TODO (1): looks like we should actually use this as a way to determine if a physical device is usable.
             // Like, "must have graphics queue and sexy compute queue!!" or something.
             uint32_t queueFamilyCount = 0;
             vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, nullptr);
@@ -124,7 +127,7 @@ public:
             for (uint32_t i = 0; i < queueFamilyCount; ++i) {
                 // Graphics queue family
                 if (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-                    std::cout << "going with queue #" << i << " for graphics.\n";
+                    std::cout << "going with queue family #" << i << " for graphics.\n";
                     graphicsQueueFamily = i;
                 }
 
@@ -132,7 +135,7 @@ public:
                 VkBool32 presentSupport;
                 vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, i, surface, &presentSupport);
                 if (presentSupport) {
-                    std::cout << "going with queue #" << i << " for present.\n";
+                    std::cout << "going with queue family #" << i << " for present.\n";
                     presentQueueFamily = i;
                 }
             }
@@ -145,19 +148,28 @@ public:
         {
             float queuePriority = 1.0f;
 
-            VkDeviceQueueCreateInfo queueCreateInfo{};
-            queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-            queueCreateInfo.queueFamilyIndex = graphicsQueueFamily.value();
-            queueCreateInfo.queueCount = 1;
-            queueCreateInfo.pQueuePriorities = &queuePriority;
+            // TODO: hah actually isn't this already done above? I'm supposed to change it right?
+            // TODO: yes. confirmed. this code belongs in the logical device step. these queues are
+            // created alongside the logical device.
+            std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
+            std::set<uint32_t> uniqueQueueFamilies = {graphicsQueueFamily.value(), presentQueueFamily.value()};
+            std::cout << "creating " << uniqueQueueFamilies.size() << " queues.\n";
+            for (uint32_t queueFamily : uniqueQueueFamilies) {
+                VkDeviceQueueCreateInfo queueCreateInfo{};
+                queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+                queueCreateInfo.queueFamilyIndex = queueFamily;
+                queueCreateInfo.queueCount = 1;
+                queueCreateInfo.pQueuePriorities = &queuePriority;
+                queueCreateInfos.push_back(queueCreateInfo);
+            }
 
             // TODO: We can populate this with feature we want later
             VkPhysicalDeviceFeatures deviceFeatures{};
 
             VkDeviceCreateInfo createInfo{};
             createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-            createInfo.pQueueCreateInfos = &queueCreateInfo;
-            createInfo.queueCreateInfoCount = 1;
+            createInfo.pQueueCreateInfos = queueCreateInfos.data();
+            createInfo.queueCreateInfoCount = queueCreateInfos.size();
             createInfo.pEnabledFeatures = &deviceFeatures;
             createInfo.enabledLayerCount = 0;
 
