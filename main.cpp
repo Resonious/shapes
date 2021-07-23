@@ -8,6 +8,7 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <array>
 
 #include "debug.h"
 
@@ -15,6 +16,34 @@ using std::unique_ptr;
 using std::optional;
 
 #define SECTION(message) std::cout << '\n' << message << '\n'
+
+// This all uses https://vulkan-tutorial.com/en as a reference.
+
+struct SwapChainSupport {
+    VkSurfaceCapabilitiesKHR capabilities;
+    std::vector<VkSurfaceFormatKHR> formats;
+    std::vector<VkPresentModeKHR> presentModes;
+
+    SwapChainSupport(VkPhysicalDevice device, VkSurfaceKHR surface) {
+        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &capabilities);
+
+        // Get formats
+        uint32_t formatCount;
+        vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, nullptr);
+        if (formatCount != 0) {
+            formats.resize(formatCount);
+            vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, formats.data());
+        }
+
+        // Get present modes
+        uint32_t presentModeCount;
+        vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, nullptr);
+        if (presentModeCount != 0) {
+            presentModes.resize(presentModeCount);
+            vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, presentModes.data());
+        }
+    }
+};
 
 class RenderState {
     VkInstance instance;
@@ -27,32 +56,47 @@ class RenderState {
     optional<uint32_t> graphicsQueueFamily;
     optional<uint32_t> presentQueueFamily;
 
-    size_t howGoodIsThisDevice(VkPhysicalDevice device) {
-        size_t score = 0;
+    std::array<const char*, 1> requiredExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
 
+    size_t howGoodIsThisDevice(VkPhysicalDevice device) {
         VkPhysicalDeviceProperties deviceProperties;
         vkGetPhysicalDeviceProperties(device, &deviceProperties);
 
+        // Make sure the device has the extensions we need
         uint32_t extensionCount;
         vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
         unique_ptr<VkExtensionProperties[]> extensions(new VkExtensionProperties[extensionCount]);
         vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, extensions.get());
 
-        std::set<std::string> requiredExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+        std::set<std::string> remainingExtensions(requiredExtensions.begin(), requiredExtensions.end());
         for (size_t i = 0; i < extensionCount; ++i) {
-            auto erased = requiredExtensions.erase(extensions[i].extensionName);
+            auto erased = remainingExtensions.erase(extensions[i].extensionName);
             if (erased > 0)
                 std::cout << "\tsupports " << extensions[i].extensionName << "!\n";
         }
-        if (requiredExtensions.size() > 0) {
+        if (remainingExtensions.size() > 0) {
             std::cout << "\tdoesn't support: ";
-            for (auto &ext : requiredExtensions) std::cout << ext << ' ';
+            for (auto &ext : remainingExtensions) std::cout << ext << ' ';
             std::cout << "- forget it.\n";
             return 0;
         }
-
         std::cout << "\thas all the extensions we need. not bad\n";
-        score += 1;
+
+        // Make sure the swapchain is actually functional
+        SwapChainSupport swapChain(device, surface);
+        if (swapChain.formats.empty()) {
+            std::cout << "\tswap chain has no formats. forget it!\n";
+            return 0;
+        }
+        if (swapChain.presentModes.empty()) {
+            std::cout << "\tswap chain has no present modes. forget it!\n";
+            return 0;
+        }
+        std::cout << "\tswap chain looks good.\n";
+
+        // From here on, we will try to estimate how powerful the card is.
+        // We'll start at 1 here 'cause 0 means unusable.
+        size_t score = 1;
 
         if (deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
             score += 1000;
@@ -106,6 +150,14 @@ public:
             }
         }
 
+        SECTION("=== Create window surface ===");
+        {
+            auto createResult = glfwCreateWindowSurface(instance, window, nullptr, &surface);
+            if (createResult != VK_SUCCESS) die(log << "glfwCreateWindowSurface failed! " << createResult);
+
+            std::cout << "done\n";
+        }
+
         SECTION("=== Pick a physical graphics device ===");
         {
             uint32_t deviceCount = 0;
@@ -117,14 +169,12 @@ public:
 
             std::map<size_t, size_t> ranking;
             for (size_t i = 0; i < deviceCount; ++i) {
-                std::cout << "device " << i+1 << '/' << deviceCount << '\n';
-
                 VkPhysicalDeviceProperties deviceProperties;
                 vkGetPhysicalDeviceProperties(devices[i], &deviceProperties);
 
-                std::cout << "\tdevice type: "
-                         << physicalDeviceTypeToString(deviceProperties.deviceType)
-                         << '\n';
+                std::cout << "device " << i+1 << '/' << deviceCount << ": "
+                          << physicalDeviceTypeToString(deviceProperties.deviceType)
+                          << '\n';
 
                 size_t score = howGoodIsThisDevice(devices[i]);
                 ranking.emplace(score, i);
@@ -134,14 +184,6 @@ public:
             size_t winnerIndex = ranking.rbegin()->second;
             physicalDevice = devices[winnerIndex];
             std::cout << winnerIndex+1 << '/' << deviceCount << " wins.\n";
-        }
-
-        SECTION("=== Create window surface ===");
-        {
-            auto createResult = glfwCreateWindowSurface(instance, window, nullptr, &surface);
-            if (createResult != VK_SUCCESS) die(log << "glfwCreateWindowSurface failed! " << createResult);
-
-            std::cout << "done\n";
         }
 
         SECTION("=== Gather queue families ===");
@@ -202,6 +244,8 @@ public:
             createInfo.queueCreateInfoCount = queueCreateInfos.size();
             createInfo.pEnabledFeatures = &deviceFeatures;
             createInfo.enabledLayerCount = 0;
+            createInfo.enabledExtensionCount = requiredExtensions.size();
+            createInfo.ppEnabledExtensionNames = requiredExtensions.data();
 
             auto createResult = vkCreateDevice(physicalDevice, &createInfo, nullptr, &device);
             if (createResult != VK_SUCCESS) die(log << "vkCreateDevice failed! " << createResult);
