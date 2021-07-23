@@ -14,7 +14,7 @@ using std::optional;
 
 #define SECTION(message) std::cout << '\n' << message << '\n'
 
-class HelloTriangleApplication {
+class RenderState {
     VkInstance instance;
     VkPhysicalDevice physicalDevice;
     VkDevice device;
@@ -196,7 +196,7 @@ public:
 
 int main() {
     std::cout << ":)\n";
-    HelloTriangleApplication app;
+    RenderState renderer;
 
     if (!glfwInit()) {
         const char *error;
@@ -211,14 +211,14 @@ int main() {
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
     auto window = glfwCreateWindow(800, 600, "Shapes!??", nullptr, nullptr);
-    app.initVulkan(window);
+    renderer.initVulkan(window);
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
-        app.mainLoop();
+        renderer.mainLoop();
     }
 
-    app.cleanup();
+    renderer.cleanup();
     glfwDestroyWindow(window);
     glfwTerminate();
 
