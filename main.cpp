@@ -108,6 +108,8 @@ class RenderState {
 
     VkSurfaceKHR surface;
     VkSwapchainKHR swapchain;
+    std::vector<VkImage> swapchainImages;
+    std::vector<VkImageView> swapchainImageViews;
 
     optional<uint32_t> graphicsQueueFamily;
     optional<uint32_t> presentQueueFamily;
@@ -193,6 +195,39 @@ class RenderState {
 
         auto result = vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapchain);
         if (result != VK_SUCCESS) die(log << "omg, failed to create swapchain. " << result);
+
+        // Swapchain is made! Last step: grab its images for later.
+        uint32_t imageCount = 0;
+        vkGetSwapchainImagesKHR(device, swapchain, &imageCount, nullptr);
+        swapchainImages.resize(imageCount);
+        vkGetSwapchainImagesKHR(device, swapchain, &imageCount, swapchainImages.data());
+    }
+
+    void createImageViews() {
+        SwapchainSupport support(physicalDevice, surface);
+        swapchainImageViews.resize(swapchainImages.size());
+
+        for (size_t i = 0 ; i < swapchainImages.size(); ++i) {
+            VkImageViewCreateInfo createInfo{};
+            createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            createInfo.image = swapchainImages[i];
+            createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            createInfo.format = support.bestSurfaceFormat().format;
+            createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            createInfo.subresourceRange.baseMipLevel = 0;
+            createInfo.subresourceRange.levelCount = 1;
+            createInfo.subresourceRange.baseArrayLayer = 0;
+            createInfo.subresourceRange.layerCount = 1;
+
+            auto result = vkCreateImageView(device, &createInfo, nullptr, &swapchainImageViews[i]);
+            if (result != VK_SUCCESS) {
+                die(log << "Failed to create image view!!?? " << i << '/' << swapchainImages.size());
+            }
+        }
     }
 
 public:
@@ -347,6 +382,7 @@ public:
 
         SECTION("=== Swapchain and friends. This is stuff that may happen a lot ===");
         createSwapchain(window);
+        createImageViews();
         std::cout << "done!\n";
     }
 
@@ -355,6 +391,7 @@ public:
     }
 
     void cleanup() {
+        for (auto imageView : swapchainImageViews) vkDestroyImageView(device, imageView, nullptr);
         vkDestroySwapchainKHR(device, swapchain, nullptr);
         vkDestroySurfaceKHR(instance, surface, nullptr);
         vkDestroyDevice(device, nullptr);
