@@ -133,10 +133,13 @@ class RenderState {
     VkSurfaceKHR surface;
     VkSwapchainKHR swapchain;
     VkExtent2D swapchainExtent;
+    VkSurfaceFormatKHR swapchainSurfaceFormat;
     std::vector<VkImage> swapchainImages;
     std::vector<VkImageView> swapchainImageViews;
 
+    VkRenderPass renderPass;
     VkPipelineLayout pipelineLayout;
+    VkPipeline graphicsPipeline;
 
     optional<uint32_t> graphicsQueueFamily;
     optional<uint32_t> presentQueueFamily;
@@ -196,6 +199,7 @@ class RenderState {
         SwapchainSupport support(physicalDevice, surface);
 
         swapchainExtent = support.swapExtent(window);
+        swapchainSurfaceFormat = support.bestSurfaceFormat();
 
         VkSwapchainCreateInfoKHR createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
@@ -203,9 +207,8 @@ class RenderState {
         createInfo.minImageCount = support.clampImageCount(support.capabilities.minImageCount + 1);
         log << "minImageCount: " << createInfo.minImageCount << '\n';
 
-        auto surfaceFormat = support.bestSurfaceFormat();
-        createInfo.imageFormat = surfaceFormat.format;
-        createInfo.imageColorSpace = surfaceFormat.colorSpace;
+        createInfo.imageFormat = swapchainSurfaceFormat.format;
+        createInfo.imageColorSpace = swapchainSurfaceFormat.colorSpace;
         createInfo.imageExtent = swapchainExtent;
         createInfo.imageArrayLayers = 1;
         createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
@@ -278,6 +281,42 @@ class RenderState {
         return shaderModule;
     }
 
+    void createRenderPass() {
+        Logger log("createRenderPass");
+
+        log << "creating color attachment\n";
+        // I guess this routes the output of the fragment shader?
+        VkAttachmentDescription colorAttachment{};
+        colorAttachment.format = swapchainSurfaceFormat.format;
+        colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+        colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+        VkAttachmentReference colorAttachmentRef{};
+        colorAttachmentRef.attachment = 0;
+        colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        VkSubpassDescription subpass{};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &colorAttachmentRef;
+
+        log << "creating render pass\n";
+        VkRenderPassCreateInfo renderPassInfo{};
+        renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        renderPassInfo.attachmentCount = 1;
+        renderPassInfo.pAttachments = &colorAttachment;
+        renderPassInfo.subpassCount = 1;
+        renderPassInfo.pSubpasses = &subpass;
+
+        auto result = vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass);
+        if (result != VK_SUCCESS) die(log << "Failed to create render pass!!" << result);
+    }
+
     void createGraphicsPipeline() {
         Logger log("createGraphicsPipeline");
 #include "triangle.vert.h"
@@ -306,8 +345,6 @@ class RenderState {
         fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
         fragShaderStageInfo.module = fragModule;
         fragShaderStageInfo.pName = "main";
-
-        VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
         log << "setting up vertex input\n";
         VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
@@ -398,6 +435,31 @@ class RenderState {
 
         auto result = vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout);
         if (result != VK_SUCCESS) die(log << "Couldn't create pipeline wtf! " << result);
+
+        VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+
+        log << "building the actual pipeline\n";
+        VkGraphicsPipelineCreateInfo pipelineInfo{};
+        pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        pipelineInfo.stageCount = 2;
+        pipelineInfo.pStages = shaderStages;
+        pipelineInfo.pVertexInputState = &vertexInputInfo;
+        pipelineInfo.pInputAssemblyState = &inputAssembly;
+        pipelineInfo.pViewportState = &viewportState;
+        pipelineInfo.pRasterizationState = &rasterizer;
+        pipelineInfo.pMultisampleState = &multisampling;
+        pipelineInfo.pDepthStencilState = nullptr; // Optional
+        pipelineInfo.pColorBlendState = &colorBlending;
+        pipelineInfo.pDynamicState = nullptr; // Optional
+        pipelineInfo.layout = pipelineLayout;
+        pipelineInfo.renderPass = renderPass;
+        pipelineInfo.subpass = 0; // <- index of the subpass that uses this pipeline
+        // Optional - the following 2 attribuges are for copying from another pipeline
+        pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // Optional
+        pipelineInfo.basePipelineIndex = -1; // Optional
+
+        result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline);
+        if (result != VK_SUCCESS) die(log << "Failed to create graphics pipeline!! " << result);
     }
 
 public:
@@ -553,6 +615,7 @@ public:
         SECTION("=== Swapchain and friends. This is stuff that may happen a lot ===");
         createSwapchain(window);
         createImageViews();
+        createRenderPass();
         createGraphicsPipeline();
         std::cout << "done!\n";
     }
@@ -562,7 +625,9 @@ public:
     }
 
     void cleanupSwapchain() {
+        vkDestroyPipeline(device, graphicsPipeline, nullptr);
         vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+        vkDestroyRenderPass(device, renderPass, nullptr);
         for (auto imageView : swapchainImageViews) vkDestroyImageView(device, imageView, nullptr);
         vkDestroySwapchainKHR(device, swapchain, nullptr);
     }
