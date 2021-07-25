@@ -165,12 +165,14 @@ class RenderState {
     }
 
     void createSwapchain(GLFWwindow *window) {
+        Logger log("createSwapchain");
         SwapchainSupport support(physicalDevice, surface);
 
         VkSwapchainCreateInfoKHR createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
         createInfo.surface = surface;
         createInfo.minImageCount = support.clampImageCount(support.capabilities.minImageCount + 1);
+        log << "minImageCount: " << createInfo.minImageCount << '\n';
 
         auto surfaceFormat = support.bestSurfaceFormat();
         createInfo.imageFormat = surfaceFormat.format;
@@ -197,16 +199,20 @@ class RenderState {
         if (result != VK_SUCCESS) die(log << "omg, failed to create swapchain. " << result);
 
         // Swapchain is made! Last step: grab its images for later.
+        log << "Swapchain created! Now fetching images:\n";
         uint32_t imageCount = 0;
         vkGetSwapchainImagesKHR(device, swapchain, &imageCount, nullptr);
         swapchainImages.resize(imageCount);
         vkGetSwapchainImagesKHR(device, swapchain, &imageCount, swapchainImages.data());
+        log << "Fetched " << imageCount << " swapchain images\n";
     }
 
     void createImageViews() {
+        Logger log("createImageViews");
         SwapchainSupport support(physicalDevice, surface);
         swapchainImageViews.resize(swapchainImages.size());
 
+        log << "creating " << swapchainImages.size() << " imageViews\n";
         for (size_t i = 0 ; i < swapchainImages.size(); ++i) {
             VkImageViewCreateInfo createInfo{};
             createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;

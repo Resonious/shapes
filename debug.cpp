@@ -13,3 +13,15 @@ const char *physicalDeviceTypeToString(int t) {
     }
     die(std::cout << "Huh? Unknown device type " << t);
 }
+
+size_t Logger::tabs = 0;
+
+Logger::Logger(const char *label) : label(label) {
+    *this << "== " << label << " ==\n";
+    tabs += 1;
+}
+
+Logger::~Logger() {
+    tabs -= 1;
+    *this << '\n';
+}
