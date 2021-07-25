@@ -1,2 +1,5 @@
 shapes
+*.spv
+*.vert.h
+*.frag.h
 vendor/
