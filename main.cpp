@@ -130,6 +130,7 @@ class RenderState {
     VkPhysicalDevice physicalDevice;
     VkDevice device;
     VkQueue presentQueue;
+    VkQueue graphicsQueue;
 
     VkSurfaceKHR surface;
     VkSwapchainKHR swapchain;
@@ -144,6 +145,9 @@ class RenderState {
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;
     VkCommandPool commandPool;
+
+    VkSemaphore imageAvailableSemaphore;
+    VkSemaphore renderFinishedSemaphore;
 
     optional<uint32_t> graphicsQueueFamily;
     optional<uint32_t> presentQueueFamily;
@@ -309,6 +313,15 @@ class RenderState {
         subpass.colorAttachmentCount = 1;
         subpass.pColorAttachments = &colorAttachmentRef;
 
+        log << "setting up subpass dependency\n";
+        VkSubpassDependency dependency{};
+        dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+        dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependency.srcAccessMask = 0;
+        dependency.dstSubpass = 0;
+        dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
         log << "creating render pass\n";
         VkRenderPassCreateInfo renderPassInfo{};
         renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -316,6 +329,8 @@ class RenderState {
         renderPassInfo.pAttachments = &colorAttachment;
         renderPassInfo.subpassCount = 1;
         renderPassInfo.pSubpasses = &subpass;
+        renderPassInfo.dependencyCount = 1;
+        renderPassInfo.pDependencies = &dependency;
 
         auto result = vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass);
         if (result != VK_SUCCESS) die(log << "Failed to create render pass!!" << result);
@@ -553,6 +568,20 @@ class RenderState {
         }
     }
 
+    void createSemaphores() {
+        Logger log("createSemaphores");
+
+        VkSemaphoreCreateInfo semaphoreInfo{};
+        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+        auto result1 = vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphore);
+        auto result2 = vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphore);
+        if (result1 != VK_SUCCESS) die(log << "Failed to create imageAvailableSemaphore");
+        log << "created imageAvailableSemaphore\n";
+        if (result2 != VK_SUCCESS) die(log << "Failed to create renderFinishedSemaphore");
+        log << "created renderFinishedSemaphore\n";
+    }
+
 public:
     void initVulkan(GLFWwindow *window) {
         uint32_t glfwExtensionCount = 0;
@@ -697,8 +726,9 @@ public:
             auto createResult = vkCreateDevice(physicalDevice, &createInfo, nullptr, &device);
             if (createResult != VK_SUCCESS) die(log << "vkCreateDevice failed! " << createResult);
 
-            std::cout << "logical devices created! now grabbing the present queue\n";
+            std::cout << "logical devices created! now grabbing the queues\n";
             vkGetDeviceQueue(device, presentQueueFamily.value(), 0, &presentQueue);
+            vkGetDeviceQueue(device, graphicsQueueFamily.value(), 0, &graphicsQueue);
 
             std::cout << "done\n";
         }
@@ -711,14 +741,48 @@ public:
         createFramebuffers();
         createCommandPool();
         createCommandBuffers();
+        createSemaphores();
         std::cout << "done!\n";
     }
 
-    void draw() {
+    void drawFrame() {
+        uint32_t imageIndex;
+        vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
 
+        VkSemaphore semaphoresToSignal[] = {renderFinishedSemaphore};
+        VkSwapchainKHR swapchainsToPresent[] = {swapchain};
+
+        VkSubmitInfo submitInfo{};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+        VkSemaphore waitSemaphores[] = {imageAvailableSemaphore};
+        VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+        submitInfo.waitSemaphoreCount = 1;
+        submitInfo.pWaitSemaphores = waitSemaphores;
+        submitInfo.pWaitDstStageMask = waitStages;
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &commandBuffers[imageIndex];
+
+        submitInfo.signalSemaphoreCount = 1;
+        submitInfo.pSignalSemaphores = semaphoresToSignal;
+
+        auto result = vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+        if (result != VK_SUCCESS) die(log << "Failed to submit draw command buffer! " << result);
+
+        VkPresentInfoKHR presentInfo{};
+        presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+        presentInfo.waitSemaphoreCount = 1;
+        presentInfo.pWaitSemaphores = semaphoresToSignal;
+        presentInfo.swapchainCount = 1;
+        presentInfo.pSwapchains = swapchainsToPresent;
+        presentInfo.pImageIndices = &imageIndex;
+
+        vkQueuePresentKHR(presentQueue, &presentInfo);
     }
 
     void cleanupSwapchain() {
+        vkDestroySemaphore(device, renderFinishedSemaphore, nullptr);
+        vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
         vkDestroyCommandPool(device, commandPool, nullptr);
         for (auto framebuffer : swapchainFramebuffers) {
             vkDestroyFramebuffer(device, framebuffer, nullptr);
@@ -731,6 +795,8 @@ public:
     }
 
     void cleanup() {
+        vkQueueWaitIdle(presentQueue);
+
         cleanupSwapchain();
         vkDestroySurfaceKHR(instance, surface, nullptr);
         vkDestroyDevice(device, nullptr);
@@ -771,7 +837,7 @@ int main() {
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
-        renderer.draw();
+        renderer.drawFrame();
     }
 
     renderer.cleanup();
