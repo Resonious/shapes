@@ -125,6 +125,7 @@ struct SwapchainSupport {
 };
 
 class RenderState {
+    // Variables
     VkInstance instance;
     VkPhysicalDevice physicalDevice;
     VkDevice device;
@@ -137,10 +138,12 @@ class RenderState {
     std::vector<VkImage> swapchainImages;
     std::vector<VkImageView> swapchainImageViews;
     std::vector<VkFramebuffer> swapchainFramebuffers;
+    std::vector<VkCommandBuffer> commandBuffers;
 
     VkRenderPass renderPass;
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;
+    VkCommandPool commandPool;
 
     optional<uint32_t> graphicsQueueFamily;
     optional<uint32_t> presentQueueFamily;
@@ -485,6 +488,71 @@ class RenderState {
         }
     }
 
+    void createCommandPool() {
+        Logger log("createCommandPool");
+
+        VkCommandPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        poolInfo.queueFamilyIndex = graphicsQueueFamily.value();
+        poolInfo.flags = 0; // Optional
+
+        auto result = vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool);
+        if (result != VK_SUCCESS) die(log << "wheres my command pool? " << result);
+
+        log << "created command pool\n";
+    }
+
+    void createCommandBuffers() {
+        Logger log("createCommandbuffers");
+
+        commandBuffers.resize(swapchainFramebuffers.size());
+
+        VkCommandBufferAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.commandPool = commandPool;
+        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandBufferCount = (uint32_t)commandBuffers.size();
+
+        auto result = vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data());
+        if (result != VK_SUCCESS) die(log << "Failed to allocate command buffer :((((( " << result);
+        log << "allocated buffers\n";
+
+        for (size_t i = 0; i < commandBuffers.size(); ++i) {
+            VkCommandBufferBeginInfo beginInfo{};
+            beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+            result = vkBeginCommandBuffer(commandBuffers[i], &beginInfo);
+            if (result != VK_SUCCESS) {
+                die(log << "Failed to start recording buffer " << i+1 << '/' << commandBuffers.size() << ' ' << result);
+            }
+
+            VkRenderPassBeginInfo renderPassInfo{};
+            renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            renderPassInfo.renderPass = renderPass;
+            renderPassInfo.framebuffer = swapchainFramebuffers[i];
+            renderPassInfo.renderArea.offset = {0, 0};
+            renderPassInfo.renderArea.extent = swapchainExtent;
+
+            VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
+            renderPassInfo.clearValueCount = 1;
+            renderPassInfo.pClearValues = &clearColor;
+
+            log << "recording render pass " << i+1 << '/' << commandBuffers.size() << '\n';
+            vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+                vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+
+                uint32_t vertexCount = 3, instanceCount = 1, firstVertex = 0, firstInstance = 0;
+                vkCmdDraw(commandBuffers[i], vertexCount, instanceCount, firstVertex, firstInstance);
+
+            vkCmdEndRenderPass(commandBuffers[i]);
+
+            if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS) {
+                die(log << "Failed to start recording buffer " << i+1 << '/' << commandBuffers.size());
+            }
+        }
+    }
+
 public:
     void initVulkan(GLFWwindow *window) {
         uint32_t glfwExtensionCount = 0;
@@ -641,14 +709,17 @@ public:
         createRenderPass();
         createGraphicsPipeline();
         createFramebuffers();
+        createCommandPool();
+        createCommandBuffers();
         std::cout << "done!\n";
     }
 
-    void mainLoop() {
+    void draw() {
 
     }
 
     void cleanupSwapchain() {
+        vkDestroyCommandPool(device, commandPool, nullptr);
         for (auto framebuffer : swapchainFramebuffers) {
             vkDestroyFramebuffer(device, framebuffer, nullptr);
         }
@@ -700,7 +771,7 @@ int main() {
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
-        renderer.mainLoop();
+        renderer.draw();
     }
 
     renderer.cleanup();
