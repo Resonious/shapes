@@ -136,6 +136,7 @@ class RenderState {
     VkSurfaceFormatKHR swapchainSurfaceFormat;
     std::vector<VkImage> swapchainImages;
     std::vector<VkImageView> swapchainImageViews;
+    std::vector<VkFramebuffer> swapchainFramebuffers;
 
     VkRenderPass renderPass;
     VkPipelineLayout pipelineLayout;
@@ -462,6 +463,28 @@ class RenderState {
         if (result != VK_SUCCESS) die(log << "Failed to create graphics pipeline!! " << result);
     }
 
+    void createFramebuffers() {
+        Logger log("createFramebuffers");
+        swapchainFramebuffers.resize(swapchainImageViews.size());
+
+        for (size_t i = 0; i < swapchainImageViews.size(); i++) {
+            log << "framebuffer " << i+1 << '/' << swapchainImageViews.size() << '\n';
+            VkImageView attachments[] = { swapchainImageViews[i] };
+
+            VkFramebufferCreateInfo framebufferInfo{};
+            framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            framebufferInfo.renderPass = renderPass;
+            framebufferInfo.attachmentCount = 1;
+            framebufferInfo.pAttachments = attachments;
+            framebufferInfo.width = swapchainExtent.width;
+            framebufferInfo.height = swapchainExtent.height;
+            framebufferInfo.layers = 1;
+
+            auto result = vkCreateFramebuffer(device, &framebufferInfo, nullptr, &swapchainFramebuffers[i]);
+            if (result != VK_SUCCESS) die(log << "Auuughghghghghgh " << result);
+        }
+    }
+
 public:
     void initVulkan(GLFWwindow *window) {
         uint32_t glfwExtensionCount = 0;
@@ -617,6 +640,7 @@ public:
         createImageViews();
         createRenderPass();
         createGraphicsPipeline();
+        createFramebuffers();
         std::cout << "done!\n";
     }
 
@@ -625,6 +649,9 @@ public:
     }
 
     void cleanupSwapchain() {
+        for (auto framebuffer : swapchainFramebuffers) {
+            vkDestroyFramebuffer(device, framebuffer, nullptr);
+        }
         vkDestroyPipeline(device, graphicsPipeline, nullptr);
         vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
         vkDestroyRenderPass(device, renderPass, nullptr);
@@ -640,10 +667,16 @@ public:
     }
 };
 
+
+static void glfwError(int id, const char* description) {
+  std::cout << "GLFW: (" << id << ") " << description << std::endl;
+}
+
 int main() {
     std::cout << ":)\n";
     RenderState renderer;
 
+    glfwSetErrorCallback(glfwError);
     if (!glfwInit()) {
         const char *error;
         glfwGetError(&error);
@@ -657,6 +690,12 @@ int main() {
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
     auto window = glfwCreateWindow(800, 600, "Shapes!??", nullptr, nullptr);
+    if (!window) {
+        const char *error;
+        glfwGetError(&error);
+        std::cout << ":( " << error << "\n";
+        return 2;
+    }
     renderer.initVulkan(window);
 
     while (!glfwWindowShouldClose(window)) {

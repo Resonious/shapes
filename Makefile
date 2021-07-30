@@ -29,4 +29,4 @@ run: shapes
 debug: shapes
 	gdb ./shapes
 clean:
-	rm -f shapes
+	rm -f shapes triangle.*.h triangle.*.spv
