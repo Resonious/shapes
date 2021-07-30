@@ -746,6 +746,8 @@ public:
     }
 
     void drawFrame() {
+        vkQueueWaitIdle(presentQueue);
+
         uint32_t imageIndex;
         vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
 
